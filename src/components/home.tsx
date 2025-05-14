@@ -12,12 +12,13 @@ import PDFUploader from "./PDFUploader";
 import ProcessingIndicator from "./ProcessingIndicator";
 import InstructionDisplay from "./InstructionDisplay";
 import { extractInstructionsFromPDF } from "@/services/geminiService";
-import { convertPDFToBase64 } from "@/utils/pdfUtils";
 
 type ProcessingStatus = "idle" | "processing" | "completed" | "error";
 
 interface Instruction {
   title: string;
+  prerequisites: string[];
+  warnings: string[];
   steps: string[];
 }
 
@@ -33,11 +34,8 @@ export default function Home() {
     setError("");
 
     try {
-      // Convert PDF to base64
-      const base64PDF = await convertPDFToBase64(file);
-
-      // Send to Gemini API
-      const result = await extractInstructionsFromPDF(base64PDF);
+      // Send to Gemini API through our proxy server
+      const result = await extractInstructionsFromPDF(file);
 
       // Update state with the response
       setInstructions(result);
@@ -88,13 +86,16 @@ export default function Home() {
             )}
 
             {status === "processing" && (
-              <ProcessingIndicator fileName={fileName} />
+              <ProcessingIndicator isProcessing={true} stage="Analyzing PDF..." />
             )}
 
             {status === "completed" && instructions && (
               <InstructionDisplay
                 title={instructions.title}
-                steps={instructions.steps}
+                instructions={instructions.steps.map((step, index) => ({
+                  step: index + 1,
+                  content: step,
+                }))}
               />
             )}
 

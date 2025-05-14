@@ -16,17 +16,17 @@ interface Instruction {
 }
 
 interface InstructionDisplayProps {
-  title?: string;
-  instructions?: Instruction[];
-  isLoading?: boolean;
-  error?: string;
+  title: string;
+  instructions: Instruction[];
+  prerequisites?: string[];
+  warnings?: string[];
 }
 
 const InstructionDisplay = ({
-  title = "Simplified Instructions",
-  instructions = [],
-  isLoading = false,
-  error = "",
+  title,
+  instructions,
+  prerequisites = [],
+  warnings = [],
 }: InstructionDisplayProps) => {
   const [copied, setCopied] = React.useState(false);
 
@@ -61,28 +61,7 @@ const InstructionDisplay = ({
       </CardHeader>
 
       <CardContent className="pt-6 pb-2">
-        {isLoading ? (
-          <div className="flex flex-col items-center justify-center py-8">
-            <div className="w-full space-y-3">
-              {[1, 2, 3, 4].map((i) => (
-                <div key={i} className="flex items-start gap-3 animate-pulse">
-                  <div className="h-6 w-6 rounded-full bg-gray-200 flex-shrink-0"></div>
-                  <div className="w-full">
-                    <div className="h-4 bg-gray-200 rounded w-3/4 mb-2"></div>
-                    <div className="h-3 bg-gray-200 rounded w-1/2"></div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : error ? (
-          <div className="py-8 text-center">
-            <p className="text-red-500">{error}</p>
-            <p className="text-sm text-gray-500 mt-2">
-              Please try uploading your PDF again.
-            </p>
-          </div>
-        ) : instructions.length === 0 ? (
+        {instructions.length === 0 ? (
           <div className="py-8 text-center">
             <p className="text-gray-500">No instructions available yet.</p>
             <p className="text-sm text-gray-400 mt-2">
@@ -90,15 +69,39 @@ const InstructionDisplay = ({
             </p>
           </div>
         ) : (
-          <div className="space-y-4">
-            {instructions.map((instruction) => (
-              <div key={instruction.step} className="flex items-start gap-3">
-                <div className="h-6 w-6 rounded-full bg-primary/10 text-primary flex items-center justify-center flex-shrink-0 font-medium text-sm">
-                  {instruction.step}
-                </div>
-                <p className="text-gray-700">{instruction.content}</p>
+          <div className="space-y-6">
+            {prerequisites.length > 0 && (
+              <div className="space-y-2">
+                <h3 className="font-medium text-gray-700">Prerequisites:</h3>
+                <ul className="list-disc list-inside space-y-1">
+                  {prerequisites.map((item, index) => (
+                    <li key={index} className="text-gray-600">{item}</li>
+                  ))}
+                </ul>
               </div>
-            ))}
+            )}
+
+            {warnings.length > 0 && (
+              <div className="space-y-2">
+                <h3 className="font-medium text-red-600">Important Warnings:</h3>
+                <ul className="list-disc list-inside space-y-1">
+                  {warnings.map((warning, index) => (
+                    <li key={index} className="text-red-500">{warning}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            <div className="space-y-4">
+              {instructions.map((instruction) => (
+                <div key={instruction.step} className="flex items-start gap-3">
+                  <div className="h-6 w-6 rounded-full bg-primary/10 text-primary flex items-center justify-center flex-shrink-0 font-medium text-sm">
+                    {instruction.step}
+                  </div>
+                  <p className="text-gray-700">{instruction.content}</p>
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </CardContent>

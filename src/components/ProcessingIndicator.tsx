@@ -11,12 +11,10 @@ interface ProcessingIndicatorProps {
 }
 
 const ProcessingIndicator = ({
-  isProcessing = false,
+  isProcessing = true,
   progress = 0,
   stage = "Analyzing PDF...",
 }: ProcessingIndicatorProps) => {
-  if (!isProcessing) return null;
-
   const stages = [
     "Analyzing PDF...",
     "Extracting content...",

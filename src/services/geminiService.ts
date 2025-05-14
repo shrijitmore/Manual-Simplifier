@@ -3,87 +3,79 @@
  */
 
 const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
-const GEMINI_MODEL = "models/gemini-pro";
-const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1/${GEMINI_MODEL}:generateContent`;
+console.log('Environment variables:', import.meta.env);
+console.log('API Key loaded:', GEMINI_API_KEY ? 'Yes' : 'No');
+console.log('API Key length:', GEMINI_API_KEY?.length);
+
+const GEMINI_MODEL = "gemini-pro";
+const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/${GEMINI_MODEL}:generateContent`;
 
 export interface GeminiResponse {
   title: string;
+  prerequisites: string[];
+  warnings: string[];
+  steps: string[];
+}
+
+interface InstructionResponse {
+  title: string;
+  prerequisites: string[];
+  warnings: string[];
   steps: string[];
 }
 
 /**
  * Extracts instructions from a PDF manual using Gemini API
- * @param pdfContent - Base64 encoded PDF content
+ * @param pdfFile - The PDF file to process
  * @returns Promise with the simplified instructions
  */
-export async function extractInstructionsFromPDF(
-  pdfContent: string,
-): Promise<GeminiResponse> {
-  try {
-    // Create the prompt for Gemini
-    const prompt = `
-      I have a PDF manual that I need simplified instructions from.
-      Please analyze this content and provide:
-      1. A clear title for the instructions
-      2. A numbered list of simplified steps to follow
-      
-      Format your response as a JSON object with the following structure:
-      {
-        "title": "Title of the instructions",
-        "steps": ["Step 1", "Step 2", "Step 3", ...]
-      }
-      
-      Keep the steps concise, clear, and easy to follow.
-      Here's the content: ${pdfContent.substring(0, 1000)}...
-    `;
+export const extractInstructionsFromPDF = async (file: File): Promise<InstructionResponse> => {
+  console.log('Preparing to upload PDF...');
+  
+  const formData = new FormData();
+  formData.append('pdf', file);
 
-    // Call the Gemini API
-    const response = await fetch(`${GEMINI_API_URL}?key=${GEMINI_API_KEY}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        contents: [
-          {
-            parts: [
-              {
-                text: prompt,
-              },
-            ],
-          },
-        ],
-      }),
+  try {
+    const response = await fetch('http://localhost:3001/api/gemini', {
+      method: 'POST',
+      body: formData,
     });
 
     if (!response.ok) {
       const errorData = await response.json();
-      throw new Error(
-        `Gemini API error: ${errorData.error?.message || response.statusText}`,
-      );
+      throw new Error(errorData.details || errorData.error || 'Failed to process PDF');
     }
 
     const data = await response.json();
-
-    // Extract the response text from Gemini
-    const responseText = data.candidates[0].content.parts[0].text;
-
-    // Parse the JSON from the response
-    // The response might contain markdown or other formatting, so we need to extract just the JSON part
-    const jsonMatch = responseText.match(/\{[\s\S]*\}/); // Find JSON object in the response
-
-    if (!jsonMatch) {
-      throw new Error("Could not parse instructions from Gemini response");
+    
+    // Validate the response format
+    if (!data || typeof data !== 'object') {
+      throw new Error('Invalid response format from Gemini API');
     }
 
-    const parsedInstructions = JSON.parse(jsonMatch[0]);
-
-    return {
-      title: parsedInstructions.title || "Simplified Instructions",
-      steps: parsedInstructions.steps || [],
+    // Ensure all required fields are present
+    const validatedResponse: InstructionResponse = {
+      title: data.title || 'Manual Instructions',
+      prerequisites: Array.isArray(data.prerequisites) ? data.prerequisites : [],
+      warnings: Array.isArray(data.warnings) ? data.warnings : [],
+      steps: Array.isArray(data.steps) ? data.steps : [],
     };
+
+    // Check if we have any actual content
+    if (validatedResponse.steps.length === 0 && 
+        validatedResponse.prerequisites.length === 0 && 
+        validatedResponse.warnings.length === 0) {
+      throw new Error('No valid instructions could be extracted from the PDF');
+    }
+
+    return validatedResponse;
+
   } catch (error) {
-    console.error("Error extracting instructions:", error);
-    throw error;
+    console.error('Error extracting instructions:', error);
+    throw new Error(
+      error instanceof Error 
+        ? `Gemini API error: ${error.message}`
+        : 'Failed to process PDF'
+    );
   }
-}
+};
