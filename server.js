@@ -8,6 +8,8 @@ import fs from 'fs';
 import pdfjsLib from 'pdfjs-dist/legacy/build/pdf.js';
 import { ChromaClient } from 'chromadb';
 import { RecursiveCharacterTextSplitter } from 'langchain/text_splitter';
+import { encode } from 'gpt-3-encoder';
+import similarity from 'compute-cosine-similarity';
 
 // Constants
 const GEMINI_MODEL = "gemini-2.0-flash";
@@ -63,7 +65,79 @@ const port = 3001;
 // Configure multer for handling file uploads
 const upload = multer({ storage: multer.memoryStorage() });
 
-const vectorStore = {}; // Simple in-memory store
+// Modified vector store implementation
+const vectorStore = {
+  chunks: [],
+  embeddings: [],
+  metadata: {
+    currentFileName: '',
+    pageCount: 0,
+    totalChunks: 0
+  },
+  addChunk: function(chunk, embedding, pageNum) {
+    this.chunks.push({
+      text: chunk,
+      page: pageNum,
+      embedding: embedding
+    });
+    this.embeddings.push(embedding);
+  },
+  clear: function() {
+    this.chunks = [];
+    this.embeddings = [];
+    this.metadata = {
+      currentFileName: '',
+      pageCount: 0,
+      totalChunks: 0
+    };
+    console.log('Vector store cleared');
+  },
+  search: function(query, topK = 5) {
+    const searchTerms = query.toLowerCase().split(' ').filter(term => term.length > 2);
+    
+    // Score each chunk based on multiple criteria
+    const scoredChunks = this.chunks.map(chunk => {
+      const text = chunk.text.toLowerCase();
+      let score = 0;
+      
+      // Term frequency scoring
+      searchTerms.forEach(term => {
+        const termCount = (text.match(new RegExp(term, 'g')) || []).length;
+        score += termCount;
+      });
+      
+      // Boost score for chunks containing multiple search terms
+      const uniqueTermsFound = searchTerms.filter(term => text.includes(term)).length;
+      score *= (uniqueTermsFound / searchTerms.length);
+      
+      // Context window scoring - check surrounding chunks
+      const chunkIndex = this.chunks.indexOf(chunk);
+      if (chunkIndex > 0) {
+        const prevChunk = this.chunks[chunkIndex - 1].text.toLowerCase();
+        searchTerms.forEach(term => {
+          if (prevChunk.includes(term)) score += 0.5;
+        });
+      }
+      
+      return {
+        chunk: chunk.text,
+        page: chunk.page,
+        score: score
+      };
+    });
+
+    // Filter and sort results
+    return scoredChunks
+      .filter(item => item.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, topK)
+      .map(item => ({
+        text: item.chunk,
+        page: item.page,
+        score: item.score
+      }));
+  }
+};
 
 // Function to generate embeddings (placeholder)
 const generateEmbedding = (text) => {
@@ -232,28 +306,49 @@ app.post('/upload', upload.single('pdf'), async (req, res) => {
   }
 
   try {
-    const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(req.file.buffer) }).promise;
-    let fullText = '';
-
-    for (let i = 1; i <= pdf.numPages; i++) {
-      const page = await pdf.getPage(i);
+    // Clear existing vector store before processing new PDF
+    vectorStore.clear();
+    
+    const pdf = await pdfjsLib.getDocument({ 
+      data: new Uint8Array(req.file.buffer),
+      ...pdfjsOptions
+    }).promise;
+    
+    vectorStore.metadata.currentFileName = req.file.originalname;
+    vectorStore.metadata.pageCount = pdf.numPages;
+    
+    // Process each page
+    for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+      const page = await pdf.getPage(pageNum);
       const textContent = await page.getTextContent();
-      const pageText = textContent.items.map(item => item.str).join(' ');
-      fullText += pageText + '\n';
+      const pageText = textContent.items
+        .map(item => item.str)
+        .join(' ')
+        .replace(/\s+/g, ' ');
+
+      // Split page text into meaningful chunks
+      const pageChunks = pageText
+        .split(/(?<=[.!?])\s+(?=[A-Z])/)
+        .filter(chunk => chunk.trim().length > 50)
+        .map(chunk => chunk.trim());
+
+      // Store chunks with page number
+      pageChunks.forEach(chunk => {
+        const tokens = encode(chunk);
+        const embedding = tokens.map(t => t / tokens.length);
+        vectorStore.addChunk(chunk, embedding, pageNum);
+      });
     }
 
-    // Generate embeddings
-    const splitter = new RecursiveCharacterTextSplitter({ chunkSize: 1000, chunkOverlap: 200 });
-    const chunks = await splitter.splitText(fullText);
-
-    // Store embeddings in vectorStore
-    chunks.forEach((chunk, index) => {
-      const embedding = generateEmbedding(chunk);
-      vectorStore[index] = { chunk, embedding };
+    vectorStore.metadata.totalChunks = vectorStore.chunks.length;
+    console.log(`Processed PDF: ${vectorStore.metadata.totalChunks} chunks stored from ${pdf.numPages} pages`);
+    
+    res.json({ 
+      message: 'PDF processed and embeddings stored', 
+      metadata: vectorStore.metadata
     });
-
-    res.json({ message: 'PDF processed and embeddings stored' });
   } catch (error) {
+    console.error('Error processing PDF:', error);
     res.status(500).json({ error: 'Failed to process PDF', details: error.message });
   }
 });
@@ -321,6 +416,98 @@ app.post('/api/gemini', upload.single('pdf'), async (req, res) => {
     res.status(500).json({ 
       error: 'Internal server error',
       details: error.message
+    });
+  }
+});
+
+// Search endpoint
+app.post('/search', async (req, res) => {
+  const { query } = req.body;
+
+  if (!query) {
+    return res.status(400).json({ error: 'No search query provided' });
+  }
+
+  try {
+    if (vectorStore.chunks.length === 0) {
+      return res.status(400).json({ 
+        error: 'No manual content available',
+        details: 'Please upload a manual first'
+      });
+    }
+
+    // Get relevant chunks using improved search
+    const searchResults = vectorStore.search(query);
+
+    if (searchResults.length === 0) {
+      return res.json({
+        answer: "I couldn't find any relevant information about that in the manual. Please try rephrasing your question or using different keywords.",
+        relevantSections: [],
+        confidence: 0
+      });
+    }
+
+    // Create an improved prompt with context
+    const prompt = `Based on these sections from the manual (with page numbers):
+    ${searchResults.map(result => `[Page ${result.page}]: ${result.text}`).join('\n\n')}
+    
+    Question: ${query}
+    
+    Please provide a comprehensive answer that:
+    1. Directly addresses the question
+    2. Includes specific details from the manual
+    3. Lists any steps in order (if applicable)
+    4. Mentions relevant warnings or prerequisites (if any)
+    5. Cites the page numbers when referring to specific information
+    
+    Format the response in a clear, easy-to-read manner.`;
+
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${process.env.VITE_GEMINI_API_KEY}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          contents: [{
+            parts: [{ text: prompt }]
+          }]
+        })
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`Gemini API error: ${response.statusText}`);
+    }
+
+    const result = await response.json();
+    
+    if (!result.candidates?.[0]?.content?.parts?.[0]?.text) {
+      throw new Error('Invalid or empty response from Gemini API');
+    }
+
+    const answer = result.candidates[0].content.parts[0].text;
+
+    res.json({
+      answer: answer.trim(),
+      relevantSections: searchResults.map(result => ({
+        text: result.text,
+        page: result.page,
+        confidence: result.score
+      })),
+      metadata: {
+        totalPages: vectorStore.metadata.pageCount,
+        pagesSearched: [...new Set(searchResults.map(r => r.page))],
+        fileName: vectorStore.metadata.currentFileName
+      }
+    });
+
+  } catch (error) {
+    console.error('Search error:', error);
+    res.status(500).json({ 
+      error: 'Failed to search the manual', 
+      details: error.message 
     });
   }
 });

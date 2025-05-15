@@ -24,6 +24,92 @@ interface InstructionResponse {
   steps: string[];
 }
 
+export interface ManualContent {
+  id: string;
+  content: string;
+  embedding: number[];
+}
+
+export interface SearchResponse {
+  answer: string;
+  relevantSections: string[];
+  confidence: number;
+}
+
+export class ManualService {
+  private static instance: ManualService;
+  private manualContent: ManualContent[] = [];
+  private isManualUploaded: boolean = false;
+
+  private constructor() {}
+
+  static getInstance(): ManualService {
+    if (!this.instance) {
+      this.instance = new ManualService();
+    }
+    return this.instance;
+  }
+
+  async uploadManual(file: File): Promise<boolean> {
+    console.log('Uploading manual...');
+    
+    const formData = new FormData();
+    formData.append('pdf', file);
+
+    try {
+      const response = await fetch('http://localhost:3001/upload', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.details || errorData.error || 'Failed to upload manual');
+      }
+
+      const result = await response.json();
+      this.isManualUploaded = true;
+      return true;
+    } catch (error) {
+      console.error('Error uploading manual:', error);
+      throw error;
+    }
+  }
+
+  async searchManual(query: string): Promise<SearchResponse> {
+    if (!this.isManualUploaded) {
+      throw new Error('Please upload a manual first');
+    }
+
+    try {
+      const response = await fetch('http://localhost:3001/search', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ query }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.details || errorData.error || 'Failed to search manual');
+      }
+
+      const result = await response.json();
+      return result;
+    } catch (error) {
+      console.error('Error searching manual:', error);
+      throw error;
+    }
+  }
+
+  isManualLoaded(): boolean {
+    return this.isManualUploaded;
+  }
+}
+
+export const manualService = ManualService.getInstance();
+
 /**
  * Extracts instructions from a PDF manual using Gemini API
  * @param pdfFile - The PDF file to process

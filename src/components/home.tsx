@@ -10,22 +10,14 @@ import {
 import { Button } from "@/components/ui/button";
 import PDFUploader from "./PDFUploader";
 import ProcessingIndicator from "./ProcessingIndicator";
-import InstructionDisplay from "./InstructionDisplay";
-import { extractInstructionsFromPDF } from "@/services/geminiService";
+import { ManualSearch } from "./ManualSearch";
+import { manualService } from "@/services/geminiService";
 
 type ProcessingStatus = "idle" | "processing" | "completed" | "error";
-
-interface Instruction {
-  title: string;
-  prerequisites: string[];
-  warnings: string[];
-  steps: string[];
-}
 
 export default function Home() {
   const [status, setStatus] = useState<ProcessingStatus>("idle");
   const [fileName, setFileName] = useState<string>("");
-  const [instructions, setInstructions] = useState<Instruction | null>(null);
   const [error, setError] = useState<string>("");
 
   const handleFileUpload = async (file: File) => {
@@ -34,11 +26,7 @@ export default function Home() {
     setError("");
 
     try {
-      // Send to Gemini API through our proxy server
-      const result = await extractInstructionsFromPDF(file);
-
-      // Update state with the response
-      setInstructions(result);
+      await manualService.uploadManual(file);
       setStatus("completed");
     } catch (err) {
       console.error("Error processing PDF:", err);
@@ -46,7 +34,7 @@ export default function Home() {
       setError(
         err instanceof Error
           ? err.message
-          : "Failed to process the PDF. Please try again.",
+          : "Failed to process the PDF. Please try again."
       );
     }
   };
@@ -54,7 +42,6 @@ export default function Home() {
   const handleReset = () => {
     setStatus("idle");
     setFileName("");
-    setInstructions(null);
     setError("");
   };
 
@@ -63,10 +50,10 @@ export default function Home() {
       <header className="border-b py-4">
         <div className="container mx-auto px-4">
           <h1 className="text-2xl font-bold text-primary">
-            PDF Manual Simplifier
+            Manual Search Assistant
           </h1>
           <p className="text-muted-foreground">
-            Upload a manual and get simplified step-by-step instructions
+            Upload a manual and ask questions about specific tasks
           </p>
         </div>
       </header>
@@ -74,41 +61,40 @@ export default function Home() {
       <main className="flex-1 container mx-auto px-4 py-8">
         <Card className="w-full max-w-4xl mx-auto bg-card">
           <CardHeader>
-            <CardTitle>Simplify Your Manual</CardTitle>
+            <CardTitle>Search Your Manual</CardTitle>
             <CardDescription>
-              Upload a PDF manual and our AI will generate simplified
-              step-by-step instructions.
+              Upload a PDF manual and ask questions to get specific instructions
             </CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-6">
             {status === "idle" && (
-              <PDFUploader onFileUpload={handleFileUpload} />
+              <PDFUploader onFileUpload={handleFileUpload} isProcessing={false} />
             )}
 
             {status === "processing" && (
-              <ProcessingIndicator isProcessing={true} stage="Analyzing PDF..." />
-            )}
-
-            {status === "completed" && instructions && (
-              <InstructionDisplay
-                title={instructions.title}
-                instructions={instructions.steps.map((step, index) => ({
-                  step: index + 1,
-                  content: step,
-                }))}
-              />
+              <ProcessingIndicator isProcessing={true} stage="Processing manual..." />
             )}
 
             {status === "error" && (
               <div className="p-4 border border-destructive rounded-md bg-destructive/10 text-destructive">
-                <p>{error}</p>
+                <p className="font-medium">Error Processing PDF</p>
+                <p className="mt-1 text-sm">{error}</p>
               </div>
+            )}
+
+            {status === "completed" && (
+              <>
+                <div className="text-sm text-muted-foreground">
+                  Manual uploaded: {fileName}
+                </div>
+                <ManualSearch isEnabled={true} />
+              </>
             )}
           </CardContent>
 
           {(status === "completed" || status === "error") && (
             <CardFooter>
-              <Button onClick={handleReset}>Upload Another PDF</Button>
+              <Button onClick={handleReset}>Upload Another Manual</Button>
             </CardFooter>
           )}
         </Card>
@@ -116,7 +102,7 @@ export default function Home() {
 
       <footer className="border-t py-4 mt-auto">
         <div className="container mx-auto px-4 text-center text-sm text-muted-foreground">
-          <p>PDF Manual Simplifier powered by Gemini AI</p>
+          <p>Manual Search Assistant powered by Gemini AI</p>
         </div>
       </footer>
     </div>
